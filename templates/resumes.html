@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Resume management · HireRank AI{% endblock %}
+{% block page_name %}Resume management{% endblock %}
+{% block content %}
+<div class="page-heading"><p class="eyebrow">CANDIDATE INTAKE</p><h1>Resume management</h1><p class="muted">Upload candidate PDFs and review their extraction status.</p></div>
+<section class="panel upload-panel">
+  <div class="panel-heading"><div><h2>Upload resumes</h2><p>Single or bulk upload · PDF only · 8 MB per file</p></div><span class="upload-step"><i class="fa-solid fa-wand-magic-sparkles"></i> NLP extraction included</span></div>
+  <form method="post" enctype="multipart/form-data" class="upload-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="vacancy-select-label">Associate with vacancy<select name="vacancy_id" required><option value="">Select an active vacancy</option>{% for vacancy in vacancies if vacancy.status == 'Active' %}<option value="{{ vacancy.id }}" {% if selected_vacancy == vacancy.id %}selected{% endif %}>{{ vacancy.title }} · {{ vacancy.department or vacancy.location or 'General' }}</option>{% endfor %}</select></label>
+    <label class="dropzone" for="resumeFiles"><span class="dropzone-icon"><i class="fa-solid fa-cloud-arrow-up"></i></span><strong>Choose PDF resumes</strong><span>Drop files here or <em>browse files</em></span><small>Upload one or multiple PDFs, up to 8 MB each</small><input type="file" id="resumeFiles" name="files" accept=".pdf,application/pdf" multiple required></label>
+    <div class="upload-submit"><span id="fileSummary" class="muted">No files selected</span><button class="button button-primary"><i class="fa-solid fa-arrow-up-from-bracket"></i> Upload and process</button></div>
+  </form>
+  <div class="process-note"><i class="fa-solid fa-circle-info"></i><span>Text extraction is heuristic. Please review and correct parsed candidate details before making decisions. Scanned image-only PDFs may not contain extractable text.</span></div>
+</section>
+<section class="panel section-gap">
+  <div class="panel-heading"><div><h2>Uploaded resumes</h2><p>{{ resumes|length }} resume{{ '' if resumes|length == 1 else 's' }} in this view</p></div><form method="get"><select name="vacancy_id" onchange="this.form.submit()" aria-label="Filter resumes by vacancy"><option value="">All vacancies</option>{% for vacancy in vacancies %}<option value="{{ vacancy.id }}" {% if selected_vacancy == vacancy.id %}selected{% endif %}>{{ vacancy.title }}</option>{% endfor %}</select></form></div>
+  {% if resumes %}<div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Resume file</th><th>Vacancy</th><th>Uploaded</th><th>Extraction</th><th></th></tr></thead><tbody>{% for resume in resumes %}<tr><td><a class="table-primary" href="{{ url_for('candidate_details', candidate_id=resume.candidate_id) }}">{{ resume.candidate.name }}</a><small class="table-sub">{{ resume.candidate.email or 'Email not identified' }}</small></td><td><span class="file-cell"><i class="fa-regular fa-file-pdf"></i>{{ resume.filename }}</span></td><td>{% set app = resume.candidate.applications|selectattr('vacancy_id', 'equalto', selected_vacancy)|first if selected_vacancy else resume.candidate.applications|first %}{{ app.vacancy.title if app else '—' }}</td><td>{{ resume.uploaded_at.strftime('%b %d, %Y') }}</td><td><span class="badge {% if resume.extraction_status == 'Processed' %}badge-success{% else %}badge-warning{% endif %}">{{ resume.extraction_status }}</span></td><td><a class="icon-button" href="{{ url_for('resume_download', resume_id=resume.id) }}" title="Download resume"><i class="fa-solid fa-download"></i></a></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state compact-empty"><i class="fa-regular fa-file-lines"></i><h3>No resumes uploaded</h3><p>Upload a PDF to create candidate profiles and matching scores.</p></div>{% endif %}
+</section>
+{% endblock %}

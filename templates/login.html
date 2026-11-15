@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Sign in · HireRank AI{% endblock %}
+{% block auth_content %}
+<section class="auth-card">
+  <div class="auth-eyebrow"><span class="status-dot"></span> RECRUITMENT WORKSPACE</div>
+  <h1>Welcome back</h1>
+  <p class="muted">Sign in to continue to your hiring dashboard.</p>
+  <form method="post" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Email address<input type="email" name="email" autocomplete="email" placeholder="you@company.com" required></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" placeholder="Enter your password" required></label>
+    <button class="button button-primary button-wide" type="submit">Sign in <i class="fa-solid fa-arrow-right"></i></button>
+  </form>
+  <p class="auth-switch">New to HireRank? <a href="{{ url_for('register') }}">Create an account</a></p>
+</section>
+{% endblock %}

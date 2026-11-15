@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Candidate Validation · HireRank AI{% endblock %}
+{% block page_name %}Candidate validation{% endblock %}
+{% block content %}
+<div class="page-heading"><p class="eyebrow">EVIDENCE-BASED SCREENING</p><h1>Candidate Validation</h1><p class="muted">Review resume evidence against the skills required and preferred for each vacancy.</p></div>
+<div class="score-method"><i class="fa-solid fa-circle-info"></i><span>Validation is vacancy-specific and does not change candidate match scores or rankings. Open a candidate profile and select <strong>Validate Candidate</strong> to generate or refresh a report.</span></div>
+<section class="panel section-gap">
+  <div class="panel-heading"><div><h2>Applications</h2><p>{{ applications|length }} application{{ '' if applications|length == 1 else 's' }} available to validate</p></div></div>
+  {% if applications %}
+  <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Vacancy</th><th>Required skills</th><th>Validation report</th><th></th></tr></thead><tbody>
+    {% for application in applications %}
+    {% set report = validation_reports[application.id] %}
+    <tr>
+      <td><a class="table-primary" href="{{ url_for('candidate_details', candidate_id=application.candidate_id, application_id=application.id) }}">{{ application.candidate.name }}</a><small class="table-sub">{{ application.candidate.email or 'Email not identified' }}</small></td>
+      <td>{{ application.vacancy.title }}</td>
+      <td>{{ application.vacancy.required_skills or 'No required skills listed' }}</td>
+      <td>{% if report and report.schema_version == 2 %}<span class="badge badge-success">Report ready</span><small class="table-sub">Updated {{ report.generated_at_display.strftime('%b %d, %Y') }}</small>{% elif report %}<span class="badge badge-warning">Refresh needed</span>{% else %}<span class="badge badge-neutral">Not validated</span>{% endif %}</td>
+      <td><a class="button button-secondary" href="{{ url_for('candidate_details', candidate_id=application.candidate_id, application_id=application.id) }}#application-validation"><i class="fa-solid fa-clipboard-check"></i> Open validation</a></td>
+    </tr>
+    {% endfor %}
+  </tbody></table></div>
+  {% else %}
+  <div class="empty-state"><span class="empty-icon"><i class="fa-solid fa-clipboard-check"></i></span><h3>No applications to validate</h3><p>Upload resumes and associate them with a vacancy to start reviewing candidate evidence.</p><a class="button button-primary" href="{{ url_for('resumes') }}">Upload resumes</a></div>
+  {% endif %}
+</section>
+{% endblock %}

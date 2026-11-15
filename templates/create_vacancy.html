@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit vacancy' if is_edit else 'Create vacancy' }} · HireRank AI{% endblock %}
+{% block page_name %}{{ 'Edit vacancy' if is_edit else 'New vacancy' }}{% endblock %}
+{% block content %}
+<div class="page-heading"><p class="eyebrow">VACANCY MANAGEMENT</p><h1>{{ 'Edit vacancy' if is_edit else 'Create a vacancy' }}</h1><p class="muted">Define the role requirements used for candidate matching.</p></div>
+<form method="post" class="panel vacancy-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-section"><div class="section-title"><span>01</span><div><h2>Role details</h2><p>Start with the essentials for this opening.</p></div></div>
+    <div class="form-grid"><label class="span-2">Job title *<input name="title" value="{{ vacancy.title if vacancy else '' }}" placeholder="e.g. Python Developer" required maxlength="160"></label><label>Department<input name="department" value="{{ vacancy.department if vacancy else '' }}" placeholder="e.g. Engineering"></label><label>Location<input name="location" value="{{ vacancy.location if vacancy else '' }}" placeholder="e.g. Hyderabad"></label><label>Employment type<select name="employment_type">{% for type in ['Full-Time', 'Part-Time', 'Contract', 'Internship', 'Temporary'] %}<option {% if vacancy and vacancy.employment_type == type %}selected{% endif %}>{{ type }}</option>{% endfor %}</select></label><label>Status<select name="status"><option value="Active" {% if not vacancy or vacancy.status == 'Active' %}selected{% endif %}>Active</option><option value="Inactive" {% if vacancy and vacancy.status == 'Inactive' %}selected{% endif %}>Inactive</option></select></label><label>Minimum experience (years)<input type="number" step="0.5" min="0" name="min_experience" value="{{ vacancy.min_experience if vacancy else 0 }}"></label><label>Maximum experience (years)<input type="number" step="0.5" min="0" name="max_experience" value="{{ vacancy.max_experience if vacancy else 0 }}"></label></div>
+  </div>
+  <div class="form-section"><div class="section-title"><span>02</span><div><h2>Candidate requirements</h2><p>Separate skills and qualifications with commas.</p></div></div>
+    <div class="form-grid"><label class="span-2">Required skills<input name="required_skills" value="{{ vacancy.required_skills if vacancy else '' }}" placeholder="Python, Flask, SQL, Git"><small>These skills contribute 30% to the match score.</small></label><label class="span-2">Preferred skills<input name="preferred_skills" value="{{ vacancy.preferred_skills if vacancy else '' }}" placeholder="Machine Learning, REST API"><small>These skills contribute 5% to the match score.</small></label><label class="span-2">Educational qualification<textarea name="education" rows="2" placeholder="B.Tech, BCA, MCA">{{ vacancy.education if vacancy else '' }}</textarea></label></div>
+  </div>
+  <div class="form-section"><div class="section-title"><span>03</span><div><h2>Role overview</h2><p>Provide context to help assess candidate fit.</p></div></div>
+    <div class="form-grid"><label class="span-2">Job description<textarea name="description" rows="5" placeholder="Describe the role and what success looks like...">{{ vacancy.description if vacancy else '' }}</textarea></label><label class="span-2">Responsibilities<textarea name="responsibilities" rows="4" placeholder="List the key responsibilities...">{{ vacancy.responsibilities if vacancy else '' }}</textarea></label></div>
+  </div>
+  <div class="form-footer"><a class="button button-secondary" href="{{ url_for('vacancies') }}">Cancel</a><button type="submit" class="button button-primary"><i class="fa-solid fa-check"></i> {{ 'Save changes' if is_edit else 'Create vacancy' }}</button></div>
+</form>
+{% endblock %}

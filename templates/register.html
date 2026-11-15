@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Create account · HireRank AI{% endblock %}
+{% block auth_content %}
+<section class="auth-card">
+  <div class="auth-eyebrow"><span class="status-dot"></span> GET STARTED</div>
+  <h1>Create your account</h1>
+  <p class="muted">Set up an HR workspace to manage your hiring pipeline.</p>
+  <form method="post" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Full name<input type="text" name="name" autocomplete="name" placeholder="Your name" maxlength="120" required></label>
+    <label>Work email<input type="email" name="email" autocomplete="email" placeholder="you@company.com" required></label>
+    <label>Password<input type="password" name="password" autocomplete="new-password" placeholder="At least 8 characters" minlength="8" required></label>
+    <button class="button button-primary button-wide" type="submit">Create account <i class="fa-solid fa-arrow-right"></i></button>
+  </form>
+  <p class="auth-switch">Already registered? <a href="{{ url_for('login') }}">Sign in</a></p>
+</section>
+{% endblock %}

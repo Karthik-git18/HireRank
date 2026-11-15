@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ candidate.name }} · HireRank AI{% endblock %}
+{% block page_name %}Candidate profile{% endblock %}
+{% block content %}
+<div class="page-heading detail-heading"><div><a class="back-link" href="{{ url_for('candidates') }}"><i class="fa-solid fa-arrow-left"></i> Candidates</a><div class="candidate-heading"><span class="candidate-avatar">{{ candidate.name[:1]|upper }}</span><div><p class="eyebrow">CANDIDATE PROFILE</p><h1>{{ candidate.name }}</h1><p class="muted">{{ candidate.email or 'Email not identified' }}{% if candidate.phone %} · {{ candidate.phone }}{% endif %}</p></div></div></div>
+  {% if application %}<div class="candidate-score-large"><span>{{ application.score.final_score|round|int if application.score else 0 }}</span><small>match score</small></div>{% endif %}
+</div>
+{% if applications|length > 1 %}<form method="get" class="application-switch"><label>Application<select name="application_id" onchange="this.form.submit()">{% for item in applications %}<option value="{{ item.id }}" {% if application and application.id == item.id %}selected{% endif %}>{{ item.vacancy.title }} · {{ item.status }}</option>{% endfor %}</select></label></form>{% endif %}
+<div class="profile-grid">
+  <section class="panel"><div class="panel-heading"><div><h2>Extracted information</h2><p>Review and correct information identified from the resume.</p></div></div>
+    <form method="post" action="{{ url_for('candidate_edit', candidate_id=candidate.id) }}" class="form-grid edit-candidate-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Name<input name="name" value="{{ candidate.name }}"></label><label>Email<input type="email" name="email" value="{{ candidate.email }}"></label><label>Phone<input name="phone" value="{{ candidate.phone }}"></label><label>Experience (years)<input type="number" step="0.1" min="0" name="experience_years" value="{{ candidate.experience_years if candidate.experience_years is not none else '' }}" placeholder="Unknown"></label>
+      <label class="span-2">Skills <small>Comma-separated; edit or add skills.</small><input name="skills" value="{{ candidate.skills|map(attribute='name')|join(', ') }}"></label>
+      <label class="span-2">Education<textarea name="education" rows="3">{{ candidate.education }}</textarea></label><label class="span-2">Experience summary<textarea name="experience_summary" rows="2">{{ candidate.experience_summary }}</textarea></label><label class="span-2">Projects<textarea name="projects" rows="3">{{ candidate.projects }}</textarea></label><label class="span-2">Certifications<textarea name="certifications" rows="2">{{ candidate.certifications }}</textarea></label>
+      <div class="span-2 form-footer"><span class="muted">Saving recalculates scores for every application.</span><button class="button button-primary">Save candidate details</button></div>
+    </form>
+  </section>
+  <div class="profile-side">
+    <section class="panel" id="application-validation"><div class="panel-heading"><div><h2>Application</h2><p>{{ application.vacancy.title if application else 'No vacancy application' }}</p></div>{% if application %}<button id="validateCandidate" type="button" class="button button-secondary" data-url="{{ url_for('validate_candidate', application_id=application.id) }}"><i class="fa-solid fa-clipboard-check"></i> Validate Candidate</button>{% endif %}</div>
+      {% if application %}<div class="application-meta"><div><small>Status</small><form method="post" action="{{ url_for('application_status', application_id=application.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><select name="status" onchange="this.form.submit()">{% for status in ['Applied', 'Under Review', 'Shortlisted', 'Selected', 'Rejected'] %}<option {% if application.status == status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></form></div><div><small>Applied</small><strong>{{ application.created_at.strftime('%b %d, %Y') }}</strong></div></div>
+      {% if application.score %}<div class="match-breakdown"><h3>Match breakdown</h3>{% for label, key, weight in [('Job description', 'description_similarity', '35%'), ('Required skills', 'required_skills', '30%'), ('Experience', 'experience_match', '20%'), ('Education', 'education_match', '10%'), ('Preferred skills', 'preferred_skills', '5%')] %}<div class="breakdown-row"><div><span>{{ label }} <small>{{ weight }}</small></span><strong>{{ application.score|attr(key)|round|int }}%</strong></div><div class="progress-track"><span style="width: {{ application.score|attr(key) }}%"></span></div></div>{% endfor %}</div>
+      <div class="evidence-list"><h3>Matching evidence</h3><p><strong>Required skills found</strong><span>{{ explanation.matched_required_skills|join(', ') or 'None identified' }}</span></p><p><strong>Required skills missing</strong><span>{{ explanation.missing_required_skills|join(', ') or 'None' }}</span></p><p><strong>Preferred skills found</strong><span>{{ explanation.matched_preferred_skills|join(', ') or 'None identified' }}</span></p><p class="scoring-note"><i class="fa-solid fa-circle-info"></i> {{ explanation.notes[0] if explanation.notes else 'Score is based on available resume evidence.' }}</p></div>{% endif %}
+      {% else %}<p class="muted">This candidate has no active application.</p>{% endif %}
+    </section>
+    <section class="panel resume-panel"><div class="panel-heading"><div><h2>Resume</h2><p>Original uploaded PDF</p></div></div>{% for resume in candidate.resumes %}<div class="resume-download"><span class="list-icon file-icon"><i class="fa-regular fa-file-pdf"></i></span><span class="compact-main"><strong>{{ resume.filename }}</strong><small>{{ resume.uploaded_at.strftime('%b %d, %Y') }}</small></span><a class="icon-button" href="{{ url_for('resume_download', resume_id=resume.id) }}"><i class="fa-solid fa-download"></i></a></div>{% else %}<p class="muted">No resume attached.</p>{% endfor %}</section>
+  </div>
+</div>
+{% if application %}
+<form id="candidateValidationForm" hidden><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+<p id="validationFeedback" class="validation-feedback" role="status" aria-live="polite" hidden></p>
+<section id="validationPanel" class="panel validation-panel" {% if not validation_report %}hidden{% endif %}>
+  <div class="panel-heading"><div><h2>Candidate validation report</h2><p>Evidence from the extracted resume, evaluated against {{ application.vacancy.title }}.</p></div></div>
+  <div id="validationReportContent"></div>
+</section>
+<script id="initialValidationReport" type="application/json">{{ validation_report|tojson }}</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Interview questions · HireRank AI{% endblock %}
+{% block page_name %}Interview questions{% endblock %}
+{% block content %}
+<div class="page-heading"><p class="eyebrow">STRUCTURED INTERVIEWS</p><h1>Interview questions</h1><p class="muted">Generate role-specific prompts grounded in vacancy and candidate details.</p></div>
+<section class="panel generator-panel">
+  <div class="panel-heading"><div><h2>Question generator</h2><p>Questions use vacancy requirements and saved candidate evidence. Names and contact details are redacted before Gemini receives the request.</p></div><span class="generator-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span></div>
+  <form class="generator-form" id="interviewForm" data-candidates-url="{{ url_for('shortlisted_candidates', vacancy_id=0) }}" data-generate-url="{{ url_for('generate_interview_questions') }}" data-save-url="{{ url_for('save_interview_questions') }}" data-saved-url="{{ url_for('saved_interview_questions') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-grid">
+      <label>Vacancy<select name="vacancy_id" id="interviewVacancy" required><option value="">Select a vacancy</option>{% for vacancy in vacancies %}<option value="{{ vacancy.id }}">{{ vacancy.title }}{% if vacancy.department %} · {{ vacancy.department }}{% endif %}</option>{% endfor %}</select></label>
+      <label>Shortlisted candidate<select name="candidate_id" id="interviewCandidate" required disabled><option value="">Select a vacancy first</option></select></label>
+      <label>Difficulty<select name="difficulty" id="interviewDifficulty"><option>Beginner</option><option selected>Intermediate</option><option>Advanced</option></select></label>
+      <label>Number of questions<select name="count" id="interviewCount">{% for count in [5, 10, 15, 20, 25] %}<option value="{{ count }}" {% if count == 5 %}selected{% endif %}>{{ count }} questions</option>{% endfor %}</select></label>
+    </div>
+    <div class="generator-footer">
+      <p class="muted"><i class="fa-solid fa-shield-halved"></i> Gemini API keys stay on the server. Configure <code>GEMINI_API_KEY</code> in .env.</p>
+      <button class="button button-primary" id="generateQuestions" type="button" disabled><i class="fa-solid fa-sparkles"></i> Generate questions</button>
+    </div>
+  </form>
+  <div class="interview-feedback" id="interviewFeedback" role="status" aria-live="polite" hidden></div>
+</section>
+
+<section class="panel section-gap generated-panel" id="generatedPanel" hidden>
+  <div class="panel-heading"><div><h2>Generated questions</h2><p id="generatedSummary">Review the candidate-specific questions before saving.</p></div><button class="button button-primary" id="saveQuestions" type="button" disabled><i class="fa-regular fa-floppy-disk"></i> Save questions</button></div>
+  <div class="question-groups" id="generatedQuestions"></div>
+</section>
+
+<section class="panel section-gap">
+  <div class="panel-heading saved-heading"><div><h2>Saved questions</h2><p>Previously generated interview questions</p></div><button class="button button-secondary" id="viewSavedQuestions" type="button"><i class="fa-regular fa-folder-open"></i> View saved questions</button></div>
+  <div class="question-groups" id="savedQuestions">
+    {% if questions %}
+      {% for category in question_categories %}
+        {% set category_questions = questions|selectattr('category', 'equalto', category)|list %}
+        {% if category_questions %}
+        <section class="question-category">
+          <div class="category-heading"><h3>{{ category }}</h3><span>{{ category_questions|length }}</span></div>
+          <div class="question-list">
+            {% for item in category_questions %}
+            <article class="question-item"><div class="question-meta"><span class="badge badge-blue">{{ item.difficulty }}</span><span class="muted">{{ item.created_at.strftime('%b %d, %Y · %H:%M') }}</span></div><p>{{ item.question }}</p><small>{{ item.candidate.name }} · {{ item.vacancy.title }}</small></article>
+            {% endfor %}
+          </div>
+        </section>
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      <div class="empty-state compact-empty" id="savedEmpty"><i class="fa-regular fa-comments"></i><h3>No saved questions yet</h3><p>Choose a shortlisted candidate, generate tailored questions, and save them here.</p></div>
+    {% endif %}
+  </div>
+</section>
+<script id="questionCategories" type="application/json">{{ question_categories|tojson }}</script>
+{% endblock %}

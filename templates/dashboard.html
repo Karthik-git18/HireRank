@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · HireRank AI{% endblock %}
+{% block page_name %}Dashboard{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>{% endblock %}
+{% block content %}
+<div class="page-heading heading-with-action">
+  <div><p class="eyebrow">OVERVIEW</p><h1>Your hiring at a glance</h1><p class="muted">Track vacancies, applicants and recruiting progress.</p></div>
+  <a class="button button-primary" href="{{ url_for('vacancy_new') }}"><i class="fa-solid fa-plus"></i> Create vacancy</a>
+</div>
+<section class="stats-grid">
+  <article class="stat-card"><div class="stat-top"><span>Total vacancies</span><span class="stat-icon blue"><i class="fa-solid fa-briefcase"></i></span></div><strong>{{ stats.vacancies }}</strong><small>All roles created</small></article>
+  <article class="stat-card"><div class="stat-top"><span>Active vacancies</span><span class="stat-icon teal"><i class="fa-solid fa-circle-check"></i></span></div><strong>{{ stats.active }}</strong><small>Currently accepting applicants</small></article>
+  <article class="stat-card"><div class="stat-top"><span>Total candidates</span><span class="stat-icon violet"><i class="fa-solid fa-users"></i></span></div><strong>{{ stats.candidates }}</strong><small>Across all vacancies</small></article>
+  <article class="stat-card"><div class="stat-top"><span>Total resumes</span><span class="stat-icon blue"><i class="fa-regular fa-file-lines"></i></span></div><strong>{{ stats.resumes }}</strong><small>PDF profiles in workspace</small></article>
+  <article class="stat-card"><div class="stat-top"><span>Shortlisted</span><span class="stat-icon orange"><i class="fa-solid fa-user-check"></i></span></div><strong>{{ stats.shortlisted }}</strong><small>Ready for interviews</small></article>
+  <article class="stat-card"><div class="stat-top"><span>Selected</span><span class="stat-icon teal"><i class="fa-solid fa-award"></i></span></div><strong>{{ stats.selected }}</strong><small>Marked as selected</small></article>
+</section>
+<section class="panel activity-panel"><div class="panel-heading"><div><h2>Recent candidate activity</h2><p>Latest applications added to your pipeline</p></div><a class="text-link" href="{{ url_for('candidates') }}">Manage candidates <i class="fa-solid fa-arrow-right"></i></a></div>
+  {% if recent_applications %}<div class="activity-list">{% for application in recent_applications %}<div class="activity-row"><span class="activity-avatar">{{ application.candidate.name[:1]|upper }}</span><span class="compact-main"><strong>{{ application.candidate.name }}</strong><small>Applied for {{ application.vacancy.title }} · {{ application.created_at.strftime('%b %d, %Y') }}</small></span><span class="badge badge-{{ application.status|lower|replace(' ', '-') }}">{{ application.status }}</span><a class="icon-button" href="{{ url_for('candidate_details', candidate_id=application.candidate_id, application_id=application.id) }}" aria-label="View candidate"><i class="fa-solid fa-arrow-up-right-from-square"></i></a></div>{% endfor %}</div>{% else %}<div class="empty-state compact-empty"><i class="fa-solid fa-arrow-trend-up"></i><p>Candidate activity will appear here after resumes are uploaded.</p></div>{% endif %}
+</section>
+<section class="dashboard-grid">
+  <article class="panel chart-panel"><div class="panel-heading"><div><h2>Recruitment pipeline</h2><p>Candidate status across your vacancies</p></div><a class="text-link" href="{{ url_for('candidates') }}">View candidates <i class="fa-solid fa-arrow-right"></i></a></div><div class="chart-wrap"><canvas id="pipelineChart"></canvas></div></article>
+  <article class="panel chart-panel"><div class="panel-heading"><div><h2>Candidate match scores</h2><p>Score distribution from 0 to 100</p></div></div><div class="chart-wrap"><canvas id="scoreChart"></canvas></div></article>
+</section>
+<section class="dashboard-grid lower-grid">
+  <article class="panel"><div class="panel-heading"><div><h2>Recent vacancies</h2><p>Your latest job openings</p></div><a class="text-link" href="{{ url_for('vacancies') }}">See all</a></div>
+    {% if recent_vacancies %}<div class="compact-list">{% for vacancy in recent_vacancies %}<a class="compact-row" href="{{ url_for('candidates', vacancy_id=vacancy.id) }}"><span class="list-icon"><i class="fa-solid fa-briefcase"></i></span><span class="compact-main"><strong>{{ vacancy.title }}</strong><small>{{ vacancy.department or 'General' }} · {{ vacancy.location or 'Location flexible' }}</small></span><span class="badge {% if vacancy.status == 'Active' %}badge-success{% else %}badge-neutral{% endif %}">{{ vacancy.status }}</span></a>{% endfor %}</div>{% else %}<div class="empty-state compact-empty"><i class="fa-regular fa-folder-open"></i><p>No vacancies yet.</p><a href="{{ url_for('vacancy_new') }}">Create your first vacancy</a></div>{% endif %}
+  </article>
+  <article class="panel"><div class="panel-heading"><div><h2>Latest resumes</h2><p>Recently added candidate profiles</p></div><a class="text-link" href="{{ url_for('resumes') }}">See all</a></div>
+    {% if recent_resumes %}<div class="compact-list">{% for resume in recent_resumes %}<a class="compact-row" href="{{ url_for('candidate_details', candidate_id=resume.candidate_id) }}"><span class="list-icon file-icon"><i class="fa-regular fa-file-pdf"></i></span><span class="compact-main"><strong>{{ resume.candidate.name }}</strong><small>{{ resume.filename }} · {{ resume.uploaded_at.strftime('%b %d') }}</small></span><i class="fa-solid fa-chevron-right row-chevron"></i></a>{% endfor %}</div>{% else %}<div class="empty-state compact-empty"><i class="fa-regular fa-file-lines"></i><p>No resumes uploaded yet.</p><a href="{{ url_for('resumes') }}">Upload resumes</a></div>{% endif %}
+  </article>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const pipeline = {{ pipeline|tojson }};
+  const scoreBuckets = {{ score_buckets|tojson }};
+  const colors = ["#3977ee", "#8871ed", "#12a88b", "#f0a143", "#e36c75"];
+  const pipelineCanvas = document.getElementById("pipelineChart");
+  if (pipelineCanvas) new Chart(pipelineCanvas, {
+    type: "bar",
+    data: { labels: Object.keys(pipeline), datasets: [{ data: Object.values(pipeline), backgroundColor: colors, borderRadius: 6, maxBarThickness: 38 }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "#edf0f5" } }, x: { grid: { display: false } } } }
+  });
+  const scoreCanvas = document.getElementById("scoreChart");
+  if (scoreCanvas) new Chart(scoreCanvas, {
+    type: "doughnut",
+    data: { labels: Object.keys(scoreBuckets), datasets: [{ data: Object.values(scoreBuckets), backgroundColor: ["#d9e3f6", "#9eb8ef", "#5d8ce4", "#274e9b"], borderWidth: 0, hoverOffset: 4 }] },
+    options: { maintainAspectRatio: false, cutout: "70%", plugins: { legend: { position: "bottom", labels: { usePointStyle: true, padding: 18 } } } }
+  });
+});
+</script>
+{% endblock %}
