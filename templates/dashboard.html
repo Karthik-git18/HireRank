@@ -14,6 +14,7 @@
   <article class="stat-card"><div class="stat-top"><span>Total resumes</span><span class="stat-icon blue"><i class="fa-regular fa-file-lines"></i></span></div><strong>{{ stats.resumes }}</strong><small>PDF profiles in workspace</small></article>
   <article class="stat-card"><div class="stat-top"><span>Shortlisted</span><span class="stat-icon orange"><i class="fa-solid fa-user-check"></i></span></div><strong>{{ stats.shortlisted }}</strong><small>Ready for interviews</small></article>
   <article class="stat-card"><div class="stat-top"><span>Selected</span><span class="stat-icon teal"><i class="fa-solid fa-award"></i></span></div><strong>{{ stats.selected }}</strong><small>Marked as selected</small></article>
+  <article class="stat-card"><div class="stat-top"><span>Rejected</span><span class="stat-icon orange"><i class="fa-solid fa-user-xmark"></i></span></div><strong>{{ stats.rejected }}</strong><small>Marked as rejected</small></article>
 </section>
 <section class="panel activity-panel"><div class="panel-heading"><div><h2>Recent candidate activity</h2><p>Latest applications added to your pipeline</p></div><a class="text-link" href="{{ url_for('candidates') }}">Manage candidates <i class="fa-solid fa-arrow-right"></i></a></div>
   {% if recent_applications %}<div class="activity-list">{% for application in recent_applications %}<div class="activity-row"><span class="activity-avatar">{{ application.candidate.name[:1]|upper }}</span><span class="compact-main"><strong>{{ application.candidate.name }}</strong><small>Applied for {{ application.vacancy.title }} · {{ application.created_at.strftime('%b %d, %Y') }}</small></span><span class="badge badge-{{ application.status|lower|replace(' ', '-') }}">{{ application.status }}</span><a class="icon-button" href="{{ url_for('candidate_details', candidate_id=application.candidate_id, application_id=application.id) }}" aria-label="View candidate"><i class="fa-solid fa-arrow-up-right-from-square"></i></a></div>{% endfor %}</div>{% else %}<div class="empty-state compact-empty"><i class="fa-solid fa-arrow-trend-up"></i><p>Candidate activity will appear here after resumes are uploaded.</p></div>{% endif %}
@@ -21,6 +22,14 @@
 <section class="dashboard-grid">
   <article class="panel chart-panel"><div class="panel-heading"><div><h2>Recruitment pipeline</h2><p>Candidate status across your vacancies</p></div><a class="text-link" href="{{ url_for('candidates') }}">View candidates <i class="fa-solid fa-arrow-right"></i></a></div><div class="chart-wrap"><canvas id="pipelineChart"></canvas></div></article>
   <article class="panel chart-panel"><div class="panel-heading"><div><h2>Candidate match scores</h2><p>Score distribution from 0 to 100</p></div></div><div class="chart-wrap"><canvas id="scoreChart"></canvas></div></article>
+</section>
+<section class="dashboard-grid lower-grid">
+  <article class="panel"><div class="panel-heading"><div><h2>Top-ranked candidates</h2><p>Highest match scores across your vacancies</p></div><a class="text-link" href="{{ url_for('rankings') }}">View rankings</a></div>
+    {% if top_candidates %}<div class="compact-list">{% for application in top_candidates %}<a class="compact-row" href="{{ url_for('candidate_details', candidate_id=application.candidate_id, application_id=application.id) }}"><span class="rank-number">{{ loop.index }}</span><span class="compact-main"><strong>{{ application.candidate.name }}</strong><small>{{ application.vacancy.title }} · {{ application.status }}</small></span><span class="score-pill">{{ application.score.final_score|round|int if application.score else 0 }}<small>/100</small></span></a>{% endfor %}</div>{% else %}<div class="empty-state compact-empty"><i class="fa-solid fa-ranking-star"></i><p>Ranked candidates will appear after resume processing.</p></div>{% endif %}
+  </article>
+  <article class="panel"><div class="panel-heading"><div><h2>Vacancy statistics</h2><p>Applicant and shortlist counts by role</p></div><a class="text-link" href="{{ url_for('vacancies') }}">View vacancies</a></div>
+    {% if vacancy_stats %}<div class="table-wrap"><table><thead><tr><th>Vacancy</th><th>Status</th><th>Applicants</th><th>Shortlisted</th></tr></thead><tbody>{% for vacancy in vacancy_stats %}<tr><td class="table-primary">{{ vacancy.title }}</td><td>{{ vacancy.status }}</td><td>{{ vacancy.applicants }}</td><td>{{ vacancy.shortlisted or 0 }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state compact-empty"><i class="fa-solid fa-briefcase"></i><p>Create a vacancy to view applicant statistics.</p></div>{% endif %}
+  </article>
 </section>
 <section class="dashboard-grid lower-grid">
   <article class="panel"><div class="panel-heading"><div><h2>Recent vacancies</h2><p>Your latest job openings</p></div><a class="text-link" href="{{ url_for('vacancies') }}">See all</a></div>
@@ -32,10 +41,10 @@
 </section>
 {% endblock %}
 {% block scripts %}
+<script id="dashboard-data" type="application/json">{{ {"pipeline": pipeline, "scoreBuckets": score_buckets}|tojson }}</script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const pipeline = {{ pipeline|tojson }};
-  const scoreBuckets = {{ score_buckets|tojson }};
+  const { pipeline, scoreBuckets } = JSON.parse(document.getElementById("dashboard-data").textContent);
   const colors = ["#3977ee", "#8871ed", "#12a88b", "#f0a143", "#e36c75"];
   const pipelineCanvas = document.getElementById("pipelineChart");
   if (pipelineCanvas) new Chart(pipelineCanvas, {

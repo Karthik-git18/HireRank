@@ -14,7 +14,7 @@
       <td><a class="table-primary" href="{{ url_for('candidate_details', candidate_id=application.candidate_id, application_id=application.id) }}">{{ application.candidate.name }}</a><small class="table-sub">{{ application.candidate.email or 'Email not identified' }}</small></td>
       <td>{{ application.vacancy.title }}</td>
       <td>{{ application.vacancy.required_skills or 'No required skills listed' }}</td>
-      <td>{% if report and report.schema_version == 2 %}<span class="badge badge-success">Report ready</span><small class="table-sub">Updated {{ report.generated_at_display.strftime('%b %d, %Y') }}</small>{% elif report %}<span class="badge badge-warning">Refresh needed</span>{% else %}<span class="badge badge-neutral">Not validated</span>{% endif %}</td>
+      <td>{% if report and report.schema_version in [2, 3] %}{% if report.validation_status == 'Passed' %}<span class="badge badge-success">Passed</span>{% elif report.validation_status == 'Warning' %}<span class="badge badge-rejected">Warning</span>{% elif report.validation_status == 'Needs Review' %}<span class="badge badge-warning">Needs Review</span>{% else %}<span class="badge badge-success">Report ready</span>{% endif %}<small class="table-sub">Updated {{ report.generated_at_display.strftime('%b %d, %Y') }}</small>{% elif report %}<span class="badge badge-warning">Refresh needed</span>{% else %}<span class="badge badge-neutral">Not validated</span>{% endif %}</td>
       <td><a class="button button-secondary" href="{{ url_for('candidate_details', candidate_id=application.candidate_id, application_id=application.id) }}#application-validation"><i class="fa-solid fa-clipboard-check"></i> Open validation</a></td>
     </tr>
     {% endfor %}

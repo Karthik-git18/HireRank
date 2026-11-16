@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from candidate_validation import build_validation_report
+from candidate_validation import build_validation_report, find_potential_duplicates
 from ml_engine import calculate_match
 
 
@@ -225,6 +225,7 @@ Built Flask APIs.
             ],
         )
         self.assertTrue(all(item["status"] == "Evidence not found" for item in report["skills"]))
+        self.assertEqual(report["validation_status"], "Needs Review")
 
     def test_quality_report_flags_repetition_and_brief_projects(self):
         candidate = SimpleNamespace(
@@ -254,6 +255,85 @@ Built Flask APIs.
         )
         self.assertIn("not be used", report["quality"]["disclaimer"])
         self.assertEqual(report["quality"]["observations"][0], "Skills mentioned without project or experience evidence: Python.")
+        self.assertEqual(report["validation_status"], "Needs Review")
+
+    def test_inconsistent_profile_details_are_warnings_for_manual_review(self):
+        candidate = SimpleNamespace(
+            id=1,
+            name="Alex Morgan",
+            email="saved@example.org",
+            phone="+1 415 555 0132",
+            skills=[],
+            education="B.Tech in Computer Science",
+            experience_years=2,
+            experience_summary="2 years of experience",
+            projects="Forecasting Platform\nBuilt a forecasting model with Python.",
+            certifications="",
+        )
+        resume_text = """Alex Morgan
+alex.morgan@example.org
++1 415 555 0132
+Skills
+Python
+Education
+B.Tech in Computer Science
+Experience
+2 years of experience
+Projects
+Forecasting Platform
+Built a forecasting model with Python.
+"""
+
+        report = build_validation_report(resume_text, candidate, self.vacancy)
+
+        discrepancies = [
+            item for item in report["findings"]
+            if item["type"] == "Profile discrepancy"
+        ]
+        self.assertEqual(report["validation_status"], "Warning")
+        self.assertTrue(any("saved email differs" in item["message"] for item in discrepancies))
+        self.assertIn("manually", discrepancies[0]["evidence"].lower())
+
+    def test_duplicate_profile_signals_are_advisory_not_rejection(self):
+        candidate = SimpleNamespace(
+            id=1, name="Alex Morgan", email="alex@example.org", phone="+1 415 555 0132"
+        )
+        other = SimpleNamespace(
+            id=2, name="Alex Morgan", email="ALEX@example.org", phone="415-555-0132"
+        )
+
+        duplicates = find_potential_duplicates(candidate, [other])
+        report = build_validation_report(
+            self.resume_text,
+            self.candidate,
+            self.vacancy,
+            potential_duplicates=duplicates,
+        )
+
+        self.assertEqual(duplicates[0]["signals"], ["same email", "same phone number", "same name"])
+        self.assertEqual(report["validation_status"], "Warning")
+        self.assertIn("confirm manually", report["findings"][-1]["evidence"].lower())
+        self.assertFalse(any("reject" in item["message"].lower() for item in report["findings"]))
+
+    def test_experience_duration_without_role_details_needs_review(self):
+        candidate = SimpleNamespace(
+            name="Alex Morgan",
+            email="alex@example.org",
+            phone="4155550132",
+            skills=[],
+            education="B.Tech",
+            experience_years=3,
+            experience_summary="3 years of experience",
+            projects="",
+        )
+
+        report = build_validation_report("", candidate, self.vacancy)
+
+        self.assertTrue(any(
+            item["type"] == "Missing experience details"
+            for item in report["findings"]
+        ))
+        self.assertEqual(report["validation_status"], "Needs Review")
 
     def test_validation_does_not_change_existing_skill_score(self):
         candidate = SimpleNamespace(
@@ -279,7 +359,7 @@ Built Flask APIs.
 
         self.assertEqual(report["skills"][0]["status"], "Mentioned only")
         self.assertEqual(score["required_skills"], 0.0)
-        self.assertEqual(score["final_score"], 10.0)
+        self.assertEqual(score["final_score"], 35.0)
 
     def test_existing_weighted_score_formula_remains_unchanged(self):
         candidate = SimpleNamespace(

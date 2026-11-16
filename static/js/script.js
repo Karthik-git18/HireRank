@@ -184,6 +184,31 @@ document.addEventListener("DOMContentLoaded", () => {
         report.generated_at ? `Generated ${new Date(report.generated_at).toLocaleString()}` : "",
       );
       validationContent.append(generated);
+      if (report.validation_status) {
+        const statusSection = addReportSection(validationContent, "Review status");
+        const status = String(report.validation_status);
+        const badgeClass = status === "Passed"
+          ? "badge-success"
+          : status === "Warning" ? "badge-rejected" : "badge-warning";
+        const badge = textNode("span", `badge ${badgeClass}`, status);
+        statusSection.append(badge);
+        statusSection.append(textNode(
+          "p",
+          "muted validation-section-note",
+          "Decision-support checks only. Review the source resume; no status automatically rejects a candidate.",
+        ));
+        if (report.findings?.length) {
+          const findings = document.createElement("ul");
+          findings.className = "validation-quality-list";
+          report.findings.forEach((finding) => {
+            const item = document.createElement("li");
+            item.append(textNode("strong", "", `${finding.status}: ${finding.message} `));
+            item.append(textNode("span", "", finding.evidence));
+            findings.append(item);
+          });
+          statusSection.append(findings);
+        }
+      }
 
       const requiredSkills = (report.skills || []).filter((item) => item.requirement === "Required");
       const overview = report.overview;

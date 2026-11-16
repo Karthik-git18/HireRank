@@ -19,7 +19,7 @@ from flask_login import (
     logout_user,
 )
 from flask_wtf.csrf import CSRFProtect
-from sqlalchemy import event, inspect, or_, text
+from sqlalchemy import case, event, func, inspect, or_, text
 from sqlalchemy.engine import Engine
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -42,8 +42,13 @@ from interview_ai import (
     InterviewGenerationError,
     generate_questions,
 )
-from candidate_validation import build_validation_report
-from ml_engine import calculate_match, extract_resume_information
+from candidate_validation import build_validation_report, find_potential_duplicates
+from ml_engine import (
+    DEFAULT_SCORING_WEIGHTS,
+    calculate_match,
+    clean_resume_text,
+    extract_resume_information,
+)
 
 load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
@@ -57,7 +62,7 @@ if configured_secret == "replace-this-with-a-long-random-secret":
 app = Flask(__name__)
 app.config.update(
     SECRET_KEY=configured_secret or os.urandom(32),
-    SQLALCHEMY_DATABASE_URI=f"sqlite:///{BASE_DIR / 'hirerank.db'}",
+    SQLALCHEMY_DATABASE_URI=os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'hirerank.db'}"),
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     MAX_CONTENT_LENGTH=16 * 1024 * 1024,
     UPLOAD_FOLDER=str(UPLOAD_DIR),
@@ -114,7 +119,36 @@ def _save_score(application):
 
 
 def _application_query():
-    return CandidateApplication.query.join(Candidate).join(Vacancy).outerjoin(CandidateScore)
+    return (
+        CandidateApplication.query.join(Candidate)
+        .join(Vacancy)
+        .outerjoin(CandidateScore)
+        .filter(
+            Candidate.owner_id == current_user.id,
+            Vacancy.owner_id == current_user.id,
+        )
+    )
+
+
+def _owned_vacancy(vacancy_id):
+    return Vacancy.query.filter_by(id=vacancy_id, owner_id=current_user.id).first_or_404()
+
+
+def _owned_candidate(candidate_id):
+    return Candidate.query.filter_by(id=candidate_id, owner_id=current_user.id).first_or_404()
+
+
+def _owned_application(application_id):
+    return (
+        CandidateApplication.query.join(Candidate)
+        .join(Vacancy)
+        .filter(
+            CandidateApplication.id == application_id,
+            Candidate.owner_id == current_user.id,
+            Vacancy.owner_id == current_user.id,
+        )
+        .first_or_404()
+    )
 
 
 @app.route("/")
@@ -172,22 +206,67 @@ def logout():
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    total_vacancies = Vacancy.query.count()
-    active_vacancies = Vacancy.query.filter_by(status="Active").count()
-    total_candidates = Candidate.query.count()
-    total_resumes = Resume.query.count()
-    shortlisted = CandidateApplication.query.filter_by(status="Shortlisted").count()
-    selected = CandidateApplication.query.filter_by(status="Selected").count()
-    recent_vacancies = Vacancy.query.order_by(Vacancy.created_at.desc()).limit(5).all()
-    recent_resumes = Resume.query.order_by(Resume.uploaded_at.desc()).limit(5).all()
-    recent_applications = CandidateApplication.query.order_by(
+    owner_id = current_user.id
+    total_vacancies = Vacancy.query.filter_by(owner_id=owner_id).count()
+    active_vacancies = Vacancy.query.filter_by(owner_id=owner_id, status="Active").count()
+    total_candidates = Candidate.query.filter_by(owner_id=owner_id).count()
+    total_resumes = Resume.query.join(Candidate).filter(Candidate.owner_id == owner_id).count()
+    shortlisted = _application_query().filter(
+        CandidateApplication.status == "Shortlisted"
+    ).count()
+    selected = _application_query().filter(CandidateApplication.status == "Selected").count()
+    rejected = _application_query().filter(CandidateApplication.status == "Rejected").count()
+    recent_vacancies = Vacancy.query.filter_by(owner_id=owner_id).order_by(
+        Vacancy.created_at.desc()
+    ).limit(5).all()
+    recent_resumes = (
+        Resume.query.join(Candidate)
+        .filter(Candidate.owner_id == owner_id)
+        .order_by(Resume.uploaded_at.desc())
+        .limit(5)
+        .all()
+    )
+    recent_applications = _application_query().order_by(
         CandidateApplication.created_at.desc()
     ).limit(5).all()
     pipeline = {
-        status: CandidateApplication.query.filter_by(status=status).count()
+        status: _application_query().filter(CandidateApplication.status == status).count()
         for status in ("Applied", "Under Review", "Shortlisted", "Selected", "Rejected")
     }
-    scores = [row[0] for row in db.session.query(CandidateScore.final_score).all()]
+    scores = [
+        row[0]
+        for row in db.session.query(CandidateScore.final_score)
+        .join(CandidateApplication)
+        .join(Candidate)
+        .join(Vacancy)
+        .filter(Candidate.owner_id == owner_id, Vacancy.owner_id == owner_id)
+        .all()
+    ]
+    vacancy_stats = (
+        db.session.query(
+            Vacancy.id,
+            Vacancy.title,
+            Vacancy.status,
+            func.count(CandidateApplication.id).label("applicants"),
+            func.sum(
+                case((CandidateApplication.status == "Shortlisted", 1), else_=0)
+            ).label("shortlisted"),
+        )
+        .outerjoin(CandidateApplication, CandidateApplication.vacancy_id == Vacancy.id)
+        .outerjoin(Candidate, Candidate.id == CandidateApplication.candidate_id)
+        .filter(
+            Vacancy.owner_id == owner_id,
+            or_(Candidate.id.is_(None), Candidate.owner_id == owner_id),
+        )
+        .group_by(Vacancy.id)
+        .order_by(Vacancy.created_at.desc())
+        .limit(8)
+        .all()
+    )
+    top_candidates = _application_query().order_by(
+        CandidateScore.final_score.desc().nullslast(),
+        CandidateApplication.created_at.desc(),
+    ).limit(5).all()
     score_buckets = {
         "0–39": sum(1 for score in scores if score < 40),
         "40–59": sum(1 for score in scores if 40 <= score < 60),
@@ -199,13 +278,15 @@ def dashboard():
         stats={
             "vacancies": total_vacancies, "active": active_vacancies,
             "candidates": total_candidates, "resumes": total_resumes,
-            "shortlisted": shortlisted, "selected": selected,
+            "shortlisted": shortlisted, "selected": selected, "rejected": rejected,
         },
         recent_vacancies=recent_vacancies,
         recent_resumes=recent_resumes,
         recent_applications=recent_applications,
         pipeline=pipeline,
         score_buckets=score_buckets,
+        vacancy_stats=vacancy_stats,
+        top_candidates=top_candidates,
     )
 
 
@@ -214,7 +295,7 @@ def dashboard():
 def vacancies():
     search = request.args.get("q", "").strip()
     status = request.args.get("status", "")
-    query = Vacancy.query
+    query = Vacancy.query.filter_by(owner_id=current_user.id)
     if search:
         query = query.filter(or_(Vacancy.title.ilike(f"%{search}%"), Vacancy.department.ilike(f"%{search}%")))
     if status in {"Active", "Inactive"}:
@@ -261,13 +342,15 @@ def _vacancy_form(vacancy=None):
         if fields["status"] not in {"Active", "Inactive"}:
             fields["status"] = "Active"
         if vacancy is None:
-            vacancy = Vacancy(**fields)
+            vacancy = Vacancy(owner_id=current_user.id, **fields)
             db.session.add(vacancy)
         else:
             for key, value in fields.items():
                 setattr(vacancy, key, value)
         db.session.flush()
-        for application in vacancy.applications:
+        for application in _application_query().filter(
+            CandidateApplication.vacancy_id == vacancy.id
+        ).all():
             _save_score(application)
         db.session.commit()
         flash("Vacancy saved.", "success")
@@ -287,7 +370,7 @@ def vacancy_new():
 @app.route("/vacancies/<int:vacancy_id>/edit", methods=["GET", "POST"])
 @login_required
 def vacancy_edit(vacancy_id):
-    vacancy = db.get_or_404(Vacancy, vacancy_id)
+    vacancy = _owned_vacancy(vacancy_id)
     updated = _vacancy_form(vacancy)
     if request.method == "POST" and updated:
         return redirect(url_for("vacancies"))
@@ -297,7 +380,7 @@ def vacancy_edit(vacancy_id):
 @app.post("/vacancies/<int:vacancy_id>/toggle")
 @login_required
 def vacancy_toggle(vacancy_id):
-    vacancy = db.get_or_404(Vacancy, vacancy_id)
+    vacancy = _owned_vacancy(vacancy_id)
     vacancy.status = "Inactive" if vacancy.status == "Active" else "Active"
     db.session.commit()
     flash(f"{vacancy.title} is now {vacancy.status.lower()}.", "success")
@@ -307,7 +390,7 @@ def vacancy_toggle(vacancy_id):
 @app.post("/vacancies/<int:vacancy_id>/delete")
 @login_required
 def vacancy_delete(vacancy_id):
-    vacancy = db.get_or_404(Vacancy, vacancy_id)
+    vacancy = _owned_vacancy(vacancy_id)
     db.session.delete(vacancy)
     db.session.commit()
     flash("Vacancy and its applications were deleted.", "success")
@@ -319,7 +402,7 @@ def vacancy_delete(vacancy_id):
 def resumes():
     if request.method == "POST":
         vacancy_id = request.form.get("vacancy_id", type=int)
-        vacancy = db.session.get(Vacancy, vacancy_id) if vacancy_id else None
+        vacancy = _owned_vacancy(vacancy_id) if vacancy_id else None
         files = [file for file in request.files.getlist("files") if file and file.filename]
         if not vacancy or vacancy.status != "Active":
             flash("Select an active vacancy before uploading resumes.", "error")
@@ -345,7 +428,9 @@ def resumes():
                     continue
                 try:
                     document = fitz.open(stream=content, filetype="pdf")
-                    extracted_text = "\n".join(page.get_text() for page in document).strip()
+                    extracted_text = clean_resume_text(
+                        "\n".join(page.get_text() for page in document)
+                    )
                     document.close()
                 except (fitz.FileDataError, RuntimeError, ValueError):
                     flash(f"{original_name}: the PDF could not be read.", "error")
@@ -354,6 +439,7 @@ def resumes():
                     flash(f"{original_name}: no selectable text was found in the PDF.", "warning")
                 info = extract_resume_information(extracted_text)
                 candidate = Candidate(
+                    owner_id=current_user.id,
                     name=info["name"], email=info["email"], phone=info["phone"],
                     education=info["education"], experience_years=info["experience_years"],
                     experience_summary=info["experience_summary"], projects=info["projects"],
@@ -383,13 +469,24 @@ def resumes():
         return redirect(url_for("resumes", vacancy_id=vacancy_id or ""))
 
     vacancy_id = request.args.get("vacancy_id", type=int)
-    query = Resume.query.join(Candidate).order_by(Resume.uploaded_at.desc())
+    query = (
+        Resume.query.join(Candidate)
+        .filter(Candidate.owner_id == current_user.id)
+        .order_by(Resume.uploaded_at.desc())
+    )
     if vacancy_id:
-        query = query.join(CandidateApplication).filter(CandidateApplication.vacancy_id == vacancy_id)
+        query = (
+            query.join(CandidateApplication)
+            .join(Vacancy)
+            .filter(
+                CandidateApplication.vacancy_id == vacancy_id,
+                Vacancy.owner_id == current_user.id,
+            )
+        )
     return render_template(
         "resumes.html",
         resumes=query.all(),
-        vacancies=Vacancy.query.order_by(Vacancy.title).all(),
+        vacancies=Vacancy.query.filter_by(owner_id=current_user.id).order_by(Vacancy.title).all(),
         selected_vacancy=vacancy_id,
     )
 
@@ -397,7 +494,11 @@ def resumes():
 @app.route("/resumes/<int:resume_id>/download")
 @login_required
 def resume_download(resume_id):
-    resume = db.get_or_404(Resume, resume_id)
+    resume = (
+        Resume.query.join(Candidate)
+        .filter(Resume.id == resume_id, Candidate.owner_id == current_user.id)
+        .first_or_404()
+    )
     path = (BASE_DIR / resume.stored_path).resolve()
     if not path.is_relative_to(UPLOAD_DIR.resolve()) or not path.is_file():
         abort(404)
@@ -419,7 +520,8 @@ def candidates():
         query = query.filter(CandidateApplication.vacancy_id == vacancy_id)
     rows = query.order_by(Candidate.created_at.desc()).all()
     return render_template(
-        "candidates.html", applications=rows, vacancies=Vacancy.query.order_by(Vacancy.title).all(),
+        "candidates.html", applications=rows,
+        vacancies=Vacancy.query.filter_by(owner_id=current_user.id).order_by(Vacancy.title).all(),
         search=search, selected_status=status, selected_vacancy=vacancy_id,
     )
 
@@ -429,7 +531,11 @@ def candidates():
 def candidate_validation_page():
     applications = _application_query().order_by(CandidateApplication.created_at.desc()).all()
     reports_by_pair = {}
-    for saved_report in CandidateValidation.query.all():
+    for saved_report in (
+        CandidateValidation.query.join(Candidate)
+        .filter(Candidate.owner_id == current_user.id)
+        .all()
+    ):
         report_data = json.loads(saved_report.report)
         report_data["generated_at_display"] = saved_report.generated_at
         reports_by_pair[(saved_report.candidate_id, saved_report.vacancy_id)] = report_data
@@ -449,13 +555,22 @@ def candidate_validation_page():
 @app.route("/candidates/<int:candidate_id>")
 @login_required
 def candidate_details(candidate_id):
-    candidate = db.get_or_404(Candidate, candidate_id)
+    candidate = _owned_candidate(candidate_id)
     application_id = request.args.get("application_id", type=int)
-    applications = CandidateApplication.query.filter_by(candidate_id=candidate_id).all()
+    applications = (
+        CandidateApplication.query.join(Candidate).join(Vacancy)
+        .filter(
+            CandidateApplication.candidate_id == candidate_id,
+            Candidate.owner_id == current_user.id,
+            Vacancy.owner_id == current_user.id,
+        )
+        .all()
+    )
     application = next((item for item in applications if item.id == application_id), None)
     if application is None:
         application = applications[0] if applications else None
     explanation = json.loads(application.score.explanation) if application and application.score else {}
+    explanation.setdefault("weights", DEFAULT_SCORING_WEIGHTS)
     validation = (
         CandidateValidation.query.filter_by(
             candidate_id=candidate.id, vacancy_id=application.vacancy_id
@@ -463,7 +578,7 @@ def candidate_details(candidate_id):
         if application else None
     )
     validation_report = json.loads(validation.report) if validation else None
-    if not isinstance(validation_report, dict) or validation_report.get("schema_version") != 2:
+    if not isinstance(validation_report, dict) or validation_report.get("schema_version") not in {2, 3}:
         validation_report = None
     return render_template(
         "candidate_details.html", candidate=candidate, application=application,
@@ -475,16 +590,23 @@ def candidate_details(candidate_id):
 @app.post("/api/applications/<int:application_id>/validate")
 @login_required
 def validate_candidate(application_id):
-    application = db.get_or_404(CandidateApplication, application_id)
+    application = _owned_application(application_id)
     resume = (
         Resume.query.filter_by(candidate_id=application.candidate_id)
         .order_by(Resume.uploaded_at.desc(), Resume.id.desc())
         .first()
     )
+    possible_matches = Candidate.query.filter(
+        Candidate.owner_id == current_user.id,
+        Candidate.id != application.candidate_id,
+    ).all()
     report = build_validation_report(
         resume.extracted_text if resume else "",
         application.candidate,
         application.vacancy,
+        potential_duplicates=find_potential_duplicates(
+            application.candidate, possible_matches
+        ),
     )
     validation = CandidateValidation.query.filter_by(
         candidate_id=application.candidate_id,
@@ -506,7 +628,7 @@ def validate_candidate(application_id):
 @app.post("/candidates/<int:candidate_id>/edit")
 @login_required
 def candidate_edit(candidate_id):
-    candidate = db.get_or_404(Candidate, candidate_id)
+    candidate = _owned_candidate(candidate_id)
     candidate.name = request.form.get("name", "").strip() or "Unidentified candidate"
     entered_email = request.form.get("email", "").strip()
     normalized_email = _normalized_email(entered_email) if entered_email else ""
@@ -537,7 +659,9 @@ def candidate_edit(candidate_id):
     for name in _csv_list(request.form.get("skills")):
         unique_skills.setdefault(name.casefold(), name)
     candidate.skills.extend(CandidateSkill(name=name) for name in unique_skills.values())
-    for application in candidate.applications:
+    for application in _application_query().filter(
+        CandidateApplication.candidate_id == candidate.id
+    ).all():
         _save_score(application)
     db.session.commit()
     flash("Candidate information and matching scores were updated.", "success")
@@ -547,7 +671,7 @@ def candidate_edit(candidate_id):
 @app.post("/applications/<int:application_id>/status")
 @login_required
 def application_status(application_id):
-    application = db.get_or_404(CandidateApplication, application_id)
+    application = _owned_application(application_id)
     status = request.form.get("status", "")
     if status not in ALLOWED_STATUSES:
         abort(400)
@@ -591,7 +715,8 @@ def rankings():
     if skill:
         rows = [row for row in rows if any(skill.casefold() in item.name.casefold() for item in row.candidate.skills)]
     return render_template(
-        "rankings.html", applications=rows, vacancies=Vacancy.query.order_by(Vacancy.title).all(),
+        "rankings.html", applications=rows,
+        vacancies=Vacancy.query.filter_by(owner_id=current_user.id).order_by(Vacancy.title).all(),
         selected_vacancy=vacancy_id, selected_status=status, min_score=min_score, skill=skill,
         min_experience=min_experience, max_experience=max_experience,
     )
@@ -600,10 +725,20 @@ def rankings():
 @app.get("/interviews")
 @login_required
 def interviews():
-    questions = InterviewQuestion.query.order_by(InterviewQuestion.created_at.desc()).limit(100).all()
+    questions = (
+        InterviewQuestion.query.join(Vacancy)
+        .join(Candidate)
+        .filter(
+            Vacancy.owner_id == current_user.id,
+            Candidate.owner_id == current_user.id,
+        )
+        .order_by(InterviewQuestion.created_at.desc())
+        .limit(100)
+        .all()
+    )
     return render_template(
         "interviews.html",
-        vacancies=Vacancy.query.order_by(Vacancy.title).all(),
+        vacancies=Vacancy.query.filter_by(owner_id=current_user.id).order_by(Vacancy.title).all(),
         questions=questions,
         question_categories=QUESTION_CATEGORIES,
     )
@@ -651,7 +786,7 @@ def generate_interview_questions():
     if identifiers is None:
         return jsonify(error="Select a vacancy and shortlisted candidate."), 400
     vacancy_id, candidate_id = identifiers
-    vacancy = db.session.get(Vacancy, vacancy_id)
+    vacancy = Vacancy.query.filter_by(id=vacancy_id, owner_id=current_user.id).first()
     if vacancy is None:
         return jsonify(error="The selected vacancy was not found."), 404
     if not vacancy.title.strip() or not any(
@@ -659,11 +794,13 @@ def generate_interview_questions():
         for value in (vacancy.description, vacancy.required_skills, vacancy.preferred_skills)
     ):
         return jsonify(error="The selected vacancy has no description or skill requirements."), 400
-    candidate = db.session.get(Candidate, candidate_id)
+    candidate = Candidate.query.filter_by(id=candidate_id, owner_id=current_user.id).first()
     if candidate is None:
         return jsonify(error="The selected candidate was not found."), 404
-    application = CandidateApplication.query.filter_by(
-        vacancy_id=vacancy_id, candidate_id=candidate_id, status="Shortlisted"
+    application = _application_query().filter(
+        CandidateApplication.vacancy_id == vacancy_id,
+        CandidateApplication.candidate_id == candidate_id,
+        CandidateApplication.status == "Shortlisted",
     ).first()
     if application is None:
         return jsonify(error="Select a candidate shortlisted for this vacancy."), 400
@@ -725,8 +862,10 @@ def save_interview_questions():
     if identifiers is None:
         return jsonify(error="Select a vacancy and shortlisted candidate."), 400
     vacancy_id, candidate_id = identifiers
-    application = CandidateApplication.query.filter_by(
-        vacancy_id=vacancy_id, candidate_id=candidate_id, status="Shortlisted"
+    application = _application_query().filter(
+        CandidateApplication.vacancy_id == vacancy_id,
+        CandidateApplication.candidate_id == candidate_id,
+        CandidateApplication.status == "Shortlisted",
     ).first()
     if application is None:
         return jsonify(error="Select a candidate shortlisted for this vacancy."), 400
@@ -775,13 +914,20 @@ def save_interview_questions():
 @app.get("/api/interview-questions")
 @login_required
 def saved_interview_questions():
-    query = InterviewQuestion.query
+    query = (
+        InterviewQuestion.query.join(Vacancy)
+        .join(Candidate)
+        .filter(
+            Vacancy.owner_id == current_user.id,
+            Candidate.owner_id == current_user.id,
+        )
+    )
     vacancy_id = request.args.get("vacancy_id", type=int)
     candidate_id = request.args.get("candidate_id", type=int)
     if vacancy_id:
-        query = query.filter_by(vacancy_id=vacancy_id)
+        query = query.filter(InterviewQuestion.vacancy_id == vacancy_id)
     if candidate_id:
-        query = query.filter_by(candidate_id=candidate_id)
+        query = query.filter(InterviewQuestion.candidate_id == candidate_id)
     questions = query.order_by(InterviewQuestion.created_at.desc()).limit(100).all()
     return jsonify(questions=[_interview_question_data(question) for question in questions])
 
@@ -789,8 +935,10 @@ def saved_interview_questions():
 @app.route("/api/vacancies/<int:vacancy_id>/shortlisted")
 @login_required
 def shortlisted_candidates(vacancy_id):
-    applications = CandidateApplication.query.filter_by(
-        vacancy_id=vacancy_id, status="Shortlisted"
+    _owned_vacancy(vacancy_id)
+    applications = _application_query().filter(
+        CandidateApplication.vacancy_id == vacancy_id,
+        CandidateApplication.status == "Shortlisted",
     ).order_by(CandidateApplication.created_at.desc()).all()
     return {
         "applications": [
@@ -818,7 +966,20 @@ with app.app_context():
     interview_columns = {
         column["name"] for column in inspect(db.engine).get_columns("interview_questions")
     }
+    owner_columns = {
+        table: {column["name"] for column in inspect(db.engine).get_columns(table)}
+        for table in ("vacancies", "candidates")
+    }
     with db.engine.begin() as connection:
+        for table, columns in owner_columns.items():
+            if "owner_id" not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {table} ADD COLUMN owner_id INTEGER "
+                    "REFERENCES users(id) ON DELETE SET NULL"
+                )
+            connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS ix_{table}_owner_id ON {table} (owner_id)"
+            )
         if "vacancy_id" not in interview_columns:
             connection.exec_driver_sql(
                 "ALTER TABLE interview_questions ADD COLUMN "
@@ -849,5 +1010,24 @@ with app.app_context():
             )
         )
         db.session.commit()
+    existing_user_ids = [row[0] for row in db.session.query(User.id).order_by(User.id).all()]
+    if len(existing_user_ids) == 1:
+        with db.engine.begin() as connection:
+            for table in ("vacancies", "candidates"):
+                connection.execute(
+                    text(f"UPDATE {table} SET owner_id = :owner_id WHERE owner_id IS NULL"),
+                    {"owner_id": existing_user_ids[0]},
+                )
+    else:
+        unassigned_count = sum(
+            db.session.query(model.id).filter(model.owner_id.is_(None)).count()
+            for model in (Vacancy, Candidate)
+        )
+        if unassigned_count:
+            app.logger.warning(
+                "Preserving %s legacy records without assigning them because the database "
+                "does not have exactly one HR account.",
+                unassigned_count,
+            )
 if __name__ == "__main__":
     app.run(debug=os.getenv("FLASK_DEBUG", "false").lower() == "true")

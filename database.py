@@ -14,6 +14,8 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    vacancies = db.relationship("Vacancy", back_populates="owner")
+    candidates = db.relationship("Candidate", back_populates="owner")
 
 
 class Vacancy(db.Model):
@@ -32,7 +34,11 @@ class Vacancy(db.Model):
     description = db.Column(db.Text, nullable=False, default="")
     responsibilities = db.Column(db.Text, nullable=False, default="")
     status = db.Column(db.String(20), nullable=False, default="Active")
+    owner_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    owner = db.relationship("User", back_populates="vacancies")
     applications = db.relationship(
         "CandidateApplication", back_populates="vacancy", cascade="all, delete-orphan"
     )
@@ -50,7 +56,11 @@ class Candidate(db.Model):
     experience_summary = db.Column(db.Text, nullable=False, default="")
     projects = db.Column(db.Text, nullable=False, default="")
     certifications = db.Column(db.Text, nullable=False, default="")
+    owner_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    owner = db.relationship("User", back_populates="candidates")
     resumes = db.relationship("Resume", back_populates="candidate", cascade="all, delete-orphan")
     skills = db.relationship(
         "CandidateSkill", back_populates="candidate", cascade="all, delete-orphan"

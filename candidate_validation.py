@@ -2,7 +2,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from ml_engine import extract_skills, normalize_text, text_similarity
+from ml_engine import extract_resume_information, extract_skills, normalize_text, text_similarity
 
 SECTION_ALIASES = {
     "skills": {"skills", "technical skills", "core skills", "skill set", "core competencies"},
@@ -689,7 +689,153 @@ def _hr_summary(required_evidence: list[dict[str, Any]]) -> str:
     return " ".join(sentences[:4])
 
 
-def build_validation_report(resume_text: str, candidate: Any, vacancy: Any) -> dict[str, Any]:
+def find_potential_duplicates(candidate: Any, candidates: list[Any]) -> list[dict[str, Any]]:
+    candidate_email = (getattr(candidate, "email", "") or "").strip().casefold()
+    candidate_phone = _phone_key(getattr(candidate, "phone", "") or "")
+    candidate_name = re.sub(
+        r"[^a-z0-9]+", "", (getattr(candidate, "name", "") or "").casefold()
+    )
+    if candidate_name == "unidentifiedcandidate":
+        candidate_name = ""
+
+    matches = []
+    for other in candidates:
+        if other.id == candidate.id:
+            continue
+        signals = []
+        if candidate_email and candidate_email == (getattr(other, "email", "") or "").strip().casefold():
+            signals.append("same email")
+        other_phone = _phone_key(getattr(other, "phone", "") or "")
+        if len(candidate_phone) >= 7 and candidate_phone == other_phone:
+            signals.append("same phone number")
+        other_name = re.sub(
+            r"[^a-z0-9]+", "", (getattr(other, "name", "") or "").casefold()
+        )
+        if candidate_name and candidate_name == other_name:
+            signals.append("same name")
+        if signals:
+            matches.append({
+                "candidate_id": other.id,
+                "name": getattr(other, "name", "Another candidate profile"),
+                "signals": signals,
+                "status": "Potential duplicate; confirm manually",
+            })
+    return matches
+
+
+def _phone_key(value: str) -> str:
+    digits = re.sub(r"\D", "", value)
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _validation_findings(
+    resume_text: str,
+    candidate: Any,
+    quality: dict[str, Any],
+    potential_duplicates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    findings = []
+    name = getattr(candidate, "name", "")
+    email = getattr(candidate, "email", "")
+    phone = getattr(candidate, "phone", "")
+    skills = getattr(candidate, "skills", [])
+    education = getattr(candidate, "education", "")
+    experience_summary = getattr(candidate, "experience_summary", "")
+    projects = getattr(candidate, "projects", "")
+    experience_years = getattr(candidate, "experience_years", None)
+    missing_fields = (
+        ("Name", not (name or "").strip() or name == "Unidentified candidate"),
+        ("Email", not (email or "").strip()),
+        ("Phone number", not (phone or "").strip()),
+        ("Technical skills", not bool(skills)),
+        ("Education", not (education or "").strip()),
+        ("Work experience details", not (experience_summary or "").strip()),
+        ("Projects", not (projects or "").strip()),
+    )
+    for label, missing in missing_fields:
+        if missing:
+            findings.append({
+                "status": "Needs Review",
+                "type": "Missing information",
+                "message": f"{label} was not identified in the candidate profile.",
+                "evidence": "Review the original resume and update the extracted profile if appropriate.",
+            })
+    if experience_summary and re.fullmatch(
+        r"\s*\d+(?:\.\d+)?\s*\+?\s*(?:years?|yrs?)\s+"
+        r"(?:of\s+)?(?:professional\s+)?experience\s*[.]?\s*",
+        experience_summary,
+        re.I,
+    ):
+        findings.append({
+            "status": "Needs Review",
+            "type": "Missing experience details",
+            "message": "A duration was identified, but role or responsibility details were not saved.",
+            "evidence": "Review the experience section in the original resume and add detail if available.",
+        })
+
+    unsupported_skills = quality["unsupported_skills"]
+    if unsupported_skills:
+        findings.append({
+            "status": "Needs Review",
+            "type": "Skill evidence",
+            "message": "Some listed skills were not found in project or experience descriptions.",
+            "evidence": ", ".join(unsupported_skills),
+        })
+
+    extracted = extract_resume_information(resume_text)
+    comparisons = (
+        ("name", name, extracted["name"]),
+        ("email", email, extracted["email"]),
+        ("phone number", phone, extracted["phone"]),
+        ("education", education, extracted["education"]),
+    )
+    for label, stored, detected in comparisons:
+        if (
+            not (stored or "").strip()
+            or not (detected or "").strip()
+            or (label == "name" and detected == "Unidentified candidate")
+        ):
+            continue
+        normalize = (
+            (lambda value: re.sub(r"\W+", "", value).casefold())
+            if label == "email"
+            else (lambda value: re.sub(r"\D", "", value))
+            if label == "phone number"
+            else (lambda value: re.sub(r"\s+", " ", value).strip().casefold())
+        )
+        if normalize(stored) != normalize(detected):
+            findings.append({
+                "status": "Warning",
+                "type": "Profile discrepancy",
+                "message": f"The saved {label} differs from a value detected in the resume text.",
+                "evidence": "This may result from extraction or manual edits; review the original resume manually.",
+            })
+
+    if extracted["experience_years"] is not None and experience_years is not None:
+        if abs(extracted["experience_years"] - experience_years) > 0.1:
+            findings.append({
+                "status": "Warning",
+                "type": "Profile discrepancy",
+                "message": "Saved experience years differ from an explicit duration detected in the resume.",
+                "evidence": "Compare the structured value with the resume wording and review manually.",
+            })
+
+    for duplicate in potential_duplicates:
+        findings.append({
+            "status": "Warning",
+            "type": "Possible duplicate profile",
+            "message": f"A profile for {duplicate['name']} shares {', '.join(duplicate['signals'])}.",
+            "evidence": "This is a matching signal only; confirm manually before merging records.",
+        })
+    return findings
+
+
+def build_validation_report(
+    resume_text: str,
+    candidate: Any,
+    vacancy: Any,
+    potential_duplicates: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     resume_text = resume_text or ""
     sections = _extract_sections(resume_text)
     project_text = sections["projects"] or candidate.projects or ""
@@ -755,19 +901,34 @@ def build_validation_report(resume_text: str, candidate: Any, vacancy: Any) -> d
             item["status"] == "Evidence not found" for item in unique_required.values()
         ),
     }
+    quality = _resume_quality(
+        resume_text, sections, candidate, project_text, experience_text,
+        skill_evidence, projects, skills,
+    )
+    potential_duplicates = potential_duplicates or []
+    findings = _validation_findings(
+        resume_text, candidate, quality, potential_duplicates
+    )
+    validation_status = (
+        "Warning"
+        if any(item["status"] == "Warning" for item in findings)
+        else "Needs Review"
+        if findings
+        else "Passed"
+    )
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "vacancy_title": vacancy.title,
         "overview": overview,
+        "validation_status": validation_status,
+        "findings": findings,
+        "potential_duplicates": potential_duplicates,
         "skills": skill_evidence,
         "projects": projects,
         "professional_experience": professional_experiences,
         "internship_experience": internship_experiences,
         "experience": experiences,
-        "quality": _resume_quality(
-            resume_text, sections, candidate, project_text, experience_text,
-            skill_evidence, projects, skills,
-        ),
+        "quality": quality,
         "hr_summary": _hr_summary(required_evidence),
     }
