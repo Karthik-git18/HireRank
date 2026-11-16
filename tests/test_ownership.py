@@ -27,12 +27,12 @@ class AccountIsolationTests(unittest.TestCase):
             db.create_all()
             self.owner_one = User(
                 name="Owner One",
-                email="one@example.org",
+                email="one@gmail.com",
                 password_hash=generate_password_hash("password-one"),
             )
             self.owner_two = User(
                 name="Owner Two",
-                email="two@example.org",
+                email="two@gmail.com",
                 password_hash=generate_password_hash("password-two"),
             )
             db.session.add_all([self.owner_one, self.owner_two])
@@ -44,7 +44,7 @@ class AccountIsolationTests(unittest.TestCase):
         self.client = app.test_client()
         response = self.client.post(
             "/login",
-            data={"email": "one@example.org", "password": "password-one"},
+            data={"email": "one@gmail.com", "password": "password-one"},
         )
         self.assertEqual(response.status_code, 302)
 

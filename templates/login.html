@@ -7,7 +7,8 @@
   <p class="muted">Sign in to continue to your hiring dashboard.</p>
   <form method="post" class="form-stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>Email address<input type="email" name="email" autocomplete="email" placeholder="you@company.com" required></label>
+    <label>Email address<input type="email" name="email" autocomplete="email" placeholder="you@gmail.com" pattern=".+@[Gg][Mm][Aa][Ii][Ll]\.[Cc][Oo][Mm]" title="Please use a Gmail address ending with @gmail.com." required></label>
+    <p class="muted">Please use a Gmail address ending with @gmail.com.</p>
     <label>Password<input type="password" name="password" autocomplete="current-password" placeholder="Enter your password" required></label>
     <button class="button button-primary button-wide" type="submit">Sign in <i class="fa-solid fa-arrow-right"></i></button>
   </form>

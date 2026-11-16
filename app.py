@@ -20,6 +20,7 @@ from flask_login import (
 )
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import case, event, func, inspect, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.engine import Engine
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -103,6 +104,11 @@ def _normalized_email(value):
         return None
 
 
+def _gmail_email(value):
+    email = _normalized_email(value.strip()).lower() if value else None
+    return email if email and email.endswith("@gmail.com") else None
+
+
 def _save_score(application):
     resume = application.candidate.resumes[-1] if application.candidate.resumes else None
     result = calculate_match(resume.extracted_text if resume else "", application.candidate, application.vacancy)
@@ -164,21 +170,28 @@ def register():
         return redirect(url_for("dashboard"))
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-        email = _normalized_email(request.form.get("email", "").strip())
+        email = _gmail_email(request.form.get("email", ""))
         password = request.form.get("password", "")
-        if not name or len(name) > 120 or not email:
-            flash("Enter a name and a valid email address.", "error")
+        if not email:
+            flash("Please use a Gmail address ending with @gmail.com.", "error")
+        elif not name or len(name) > 120:
+            flash("Enter a valid name.", "error")
         elif len(password) < 8:
             flash("Choose a password with at least 8 characters.", "error")
-        elif User.query.filter_by(email=email).first():
+        elif User.query.filter(func.lower(User.email) == email).first():
             flash("An account already exists for that email.", "error")
         else:
             user = User(name=name, email=email, password_hash=generate_password_hash(password))
             db.session.add(user)
-            db.session.commit()
-            login_user(user)
-            flash("Your HR account is ready.", "success")
-            return redirect(url_for("dashboard"))
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                flash("An account already exists for that email.", "error")
+            else:
+                login_user(user)
+                flash("Your HR account is ready.", "success")
+                return redirect(url_for("dashboard"))
     return render_template("register.html")
 
 
@@ -187,12 +200,15 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard"))
     if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        user = User.query.filter_by(email=email).first()
-        if user and check_password_hash(user.password_hash, request.form.get("password", "")):
+        email = _gmail_email(request.form.get("email", ""))
+        user = User.query.filter(func.lower(User.email) == email).first() if email else None
+        if email is None:
+            flash("Please use a Gmail address ending with @gmail.com.", "error")
+        elif user and check_password_hash(user.password_hash, request.form.get("password", "")):
             login_user(user)
             return redirect(url_for("dashboard"))
-        flash("The email or password was not recognised.", "error")
+        else:
+            flash("The email or password was not recognised.", "error")
     return render_template("login.html")
 
 
